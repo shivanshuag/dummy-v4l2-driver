@@ -25,13 +25,21 @@ struct buffer {
   size_t  length;
 };
 
+#define LR 0
+#define RL 1
+#define TB 2
+#define BT 3
+
+
 static char            *dev_name;
 struct buffer          *buffers;
+struct buffer          *original_buffer;
 static unsigned int     n_buffers;
 static int              fd = -1;
 static int              frame_count = 70;
 static int height, width;
-static uint32_t* line;
+//static uint32_t* line;
+int display_mode = 3;
 
 static void errno_exit(const char *s) {
   fprintf(stderr, "%s error %d, %s\n", s, errno, strerror(errno));
@@ -96,21 +104,24 @@ static struct bar_std bars[] = {
 // TODO: displaying the 0th bar format now, but this should be taken from user
 int bar_num = 0;
 
-static void precalculate_line(uint32_t *buf)
-{
-	int w;
-  uint8_t a, r, g, b;
+static void precalculate_buffer() {
+  uint32_t *line;
+	int w, h;
+  uint8_t r, g, b;
+  line = malloc(width*4);
   // Supports just RGB32 format right now
 	for (w = 0; w < width; w++) {
     // the color of the bar displayed
 		int colorpos = (w/(width/8))%8;
-    a = 255;
     r = bars[bar_num].bar[colorpos][0];
     g = bars[bar_num].bar[colorpos][1];
     b = bars[bar_num].bar[colorpos][2];
     //printf("r is %x\n", (unsigned char)r);
-    buf[w] = (r << 16) | (g << 8) | b;
+    line[w] = (r << 16) | (g << 8) | b;
 	}
+  for (h=0;h<height;h++) {
+    memcpy(original_buffer->start + h*width*4, line, width*4);
+  }
 }
 
 static void process_image(const void *p, int size)
@@ -126,17 +137,14 @@ static void process_image(const void *p, int size)
     printf("\n");
   }*/
   //fwrite(p, size, 1, stdout);
-  modeset_draw((uint32_t *)p);
+  modeset_draw((uint32_t *)original_buffer->start, (uint32_t *)p, display_mode);
   fflush(stderr);
   fprintf(stderr, ".");
   fflush(stdout);
 }
 
 static void fill_buffer(uint32_t* buf) {
-  int i;
-  for(i=0;i< height;i++) {
-    memcpy(buf + i*width, line, width*4);
-  }
+  memcpy(buf, original_buffer->start, height*width*4);
   printf("\n\n\nFilled buffer\n");
   //process_image((void *)buf, width*height*4);
 }
@@ -309,6 +317,7 @@ static void init_userp(unsigned int buffer_size) {
 
 
 static void init_device(void) {
+  printf("doing init");
   struct v4l2_capability cap;
   struct v4l2_format fmt;
 
@@ -354,8 +363,9 @@ static void init_device(void) {
   //  initialize the user pointers for the buffers
   init_userp(fmt.fmt.pix.sizeimage);
   // calculate line
-  line = malloc(width*4);
-  precalculate_line(line);
+  original_buffer = malloc(sizeof(struct buffer));
+  original_buffer->start = malloc(fmt.fmt.pix.sizeimage);
+  precalculate_buffer();
 
 }
 

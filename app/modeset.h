@@ -37,7 +37,7 @@ int modeset_open(int *out, const char *node);
 
 int modeset_prepare(int fd);
 
-void modeset_draw(uint32_t *buff);
+void modeset_draw(uint32_t *original_buffer, uint32_t *buff, int display_mode);
 
 void modeset_cleanup(int fd);
 

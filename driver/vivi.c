@@ -54,7 +54,7 @@ MODULE_VERSION(VIVI_VERSION);
 
 static unsigned debug=1;
 
-static unsigned int vid_limit = 16;
+static unsigned int vid_limit = 64;
 
 
 #define dprintk(dev, level, fmt, arg...) \

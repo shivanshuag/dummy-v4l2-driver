@@ -550,23 +550,60 @@ out_return:
  * beyond the scope of this document.
  */
 
-void modeset_draw(uint32_t * buff)
+void modeset_draw(uint32_t *original_buffer, uint32_t * buff, int display_mode)
 {
 	unsigned int j, k, off;
 	struct modeset_dev *iter;
-
+	uint32_t *temp;
 	//srand(time(NULL));
 	//r = rand() % 0xff;
 	//g = rand() % 0xff;
 	//b = rand() % 0xff;
 	iter = modeset_list;
 	//printf("\n\nstride is:%d\n", iter->stride);
-	for(j=0; j< iter->height; ++j ){
-		for (k = 0; k < iter->width; ++k) {
-			off = iter->stride * j + k * 4;
-			*(uint32_t*)&iter->map[off] = buff[j*iter->width+k];
+	if(display_mode == 0 || display_mode == 1) {
+		if(display_mode == 1) {
+			 temp = original_buffer;
+			 original_buffer = buff;
+			 buff = temp;
+		}
+		// draw left
+		for(j=0; j< iter->height; ++j ){
+			for (k = 0; k < iter->width/2; k++) {
+				off = iter->stride * j + k * 4;
+				*(uint32_t*)&iter->map[off] = original_buffer[j*iter->width+k*2];
+			}
+		}
+		//draw right
+		for(j=0; j< iter->height; ++j ){
+			for (k = iter->width/2; k < iter->width; ++k) {
+				off = iter->stride * j + k * 4;
+				*(uint32_t*)&iter->map[off] = buff[j*iter->width+((k-iter->width/2)*2)];
+			}
 		}
 	}
+	if(display_mode == 2 || display_mode == 3) {
+		if(display_mode == 3) {
+			 temp = original_buffer;
+			 original_buffer = buff;
+			 buff = temp;
+		}
+		// draw up
+		for(j=0;j<iter->height/2;j++) {
+			for (k = 0; k < iter->width; ++k) {
+				off = iter->stride * j + k * 4;
+				*(uint32_t*)&iter->map[off] = original_buffer[j*iter->width+k];
+			}
+		}
+		// draw down
+		for(j=iter->height/2;j<iter->height;j++) {
+			for (k = 0; k < iter->width; ++k) {
+				off = iter->stride * j + k * 4;
+				*(uint32_t*)&iter->map[off] = buff[j*iter->width+k];
+			}
+		}
+	}
+
 }
 
 /*
