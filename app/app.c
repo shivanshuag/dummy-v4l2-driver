@@ -15,6 +15,8 @@
 #include <sys/ioctl.h>
 
 #include <linux/videodev2.h>
+#include <stdint.h>
+#include "modeset.h"
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
@@ -29,7 +31,7 @@ static unsigned int     n_buffers;
 static int              fd = -1;
 static int              frame_count = 70;
 static int height, width;
-static char* line;
+static uint32_t* line;
 
 static void errno_exit(const char *s) {
   fprintf(stderr, "%s error %d, %s\n", s, errno, strerror(errno));
@@ -94,30 +96,27 @@ static struct bar_std bars[] = {
 // TODO: displaying the 0th bar format now, but this should be taken from user
 int bar_num = 0;
 
-static void precalculate_line(char *buf)
+static void precalculate_line(uint32_t *buf)
 {
 	int w;
-  char a, r, g, b;
+  uint8_t a, r, g, b;
   // Supports just RGB32 format right now
-	for (w = 0; w < width * 4; w += 4) {
+	for (w = 0; w < width; w++) {
     // the color of the bar displayed
-		int colorpos = (w/4)/(width/8);
-    a = 0;
+		int colorpos = (w/(width/8))%8;
+    a = 255;
     r = bars[bar_num].bar[colorpos][0];
     g = bars[bar_num].bar[colorpos][1];
     b = bars[bar_num].bar[colorpos][2];
     //printf("r is %x\n", (unsigned char)r);
-    buf[w] = a;
-    buf[w+1] = r;
-    buf[w+2] = g;
-    buf[w+3] = b;
+    buf[w] = (r << 16) | (g << 8) | b;
 	}
 }
 
 static void process_image(const void *p, int size)
 {
   //if (out_buf)
-  int h,w;
+  /*int h,w;
   char *frame = (char*)p;
   for(h=0;h<height;h++) {
     for(w=0;w<width*4;w+=4) {
@@ -125,21 +124,21 @@ static void process_image(const void *p, int size)
       frame+=4;
     }
     printf("\n");
-  }
+  }*/
   //fwrite(p, size, 1, stdout);
-
+  modeset_draw((uint32_t *)p);
   fflush(stderr);
   fprintf(stderr, ".");
   fflush(stdout);
 }
 
-fill_buffer(char* buf) {
+static void fill_buffer(uint32_t* buf) {
   int i;
   for(i=0;i< height;i++) {
-    memcpy(buf + i*width*4, line, width*4);
+    memcpy(buf + i*width, line, width*4);
   }
   printf("\n\n\nFilled buffer\n");
-  process_image((void *)buf, width*height*4);
+  //process_image((void *)buf, width*height*4);
 }
 
 static void uninit_device(void)
@@ -195,7 +194,7 @@ static int read_frame(void)
   process_image((void *)buf.m.userptr, buf.bytesused);
 
   // fill the buffer
-  fill_buffer(buffers[i].start);
+  fill_buffer((uint32_t *)buffers[i].start);
   // queue the buf again
   if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
     errno_exit("VIDIOC_QBUF");
@@ -244,7 +243,7 @@ static void mainloop(void) {
 
 
 static void start_capturing(void) {
-  unsigned int i, j;
+  unsigned int i;
   enum v4l2_buf_type type;
 
   // QBUF ioctl for all the buffers
@@ -258,7 +257,7 @@ static void start_capturing(void) {
     buf.m.userptr = (unsigned long)buffers[i].start;
     buf.length = buffers[i].length;
 
-    fill_buffer(buffers[i].start);
+    fill_buffer((uint32_t *)buffers[i].start);
     if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
       errno_exit("VIDIOC_QBUF");
   }
@@ -274,7 +273,7 @@ static void init_userp(unsigned int buffer_size) {
   struct v4l2_requestbuffers req;
   CLEAR(req);
 
-  req.count  = 4;
+  req.count  = 2;
   req.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   req.memory = V4L2_MEMORY_USERPTR;
 
@@ -289,7 +288,7 @@ static void init_userp(unsigned int buffer_size) {
     }
   }
 
-  buffers = calloc(4, sizeof(*buffers));
+  buffers = calloc(2, sizeof(*buffers));
 
   if (!buffers) {
     fprintf(stderr, "Out of memory\n");
@@ -297,7 +296,7 @@ static void init_userp(unsigned int buffer_size) {
   }
 
   // allocate memory for the buffers
-  for (n_buffers = 0; n_buffers < 4; ++n_buffers) {
+  for (n_buffers = 0; n_buffers < 2; ++n_buffers) {
     buffers[n_buffers].length = buffer_size;
     buffers[n_buffers].start = malloc(buffer_size);
     if (!buffers[n_buffers].start) {
@@ -338,8 +337,8 @@ static void init_device(void) {
   CLEAR(fmt);
   fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   // TODO: get this from modeset
-  fmt.fmt.pix.width       = 48;
-  fmt.fmt.pix.height      = 32;
+  fmt.fmt.pix.width       = width;
+  fmt.fmt.pix.height      = height;
   fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB32;
   fmt.fmt.pix.field       = V4L2_FIELD_NONE;
   width = fmt.fmt.pix.width;
@@ -388,11 +387,19 @@ static void open_device(void)
 int main(int argc, char **argv) {
   dev_name = "/dev/video0";
   open_device();
+  int drifd = init_modeset();
+  if(modeset_list == NULL) {
+    fprintf(stderr, "cannot find drm device");
+    exit(EXIT_FAILURE);
+  }
+  height = modeset_list->height;
+  width = modeset_list->width;
   init_device();
   start_capturing();
   mainloop();
   uninit_device();
   close_device();
+  modeset_cleanup(drifd);
   fprintf(stderr, "\n");
   return 0;
 }

@@ -66,7 +66,7 @@
  * nvidia, intel, etc. specific code, we depend on DUMB_BUFFERs here.
  */
 
-static int modeset_open(int *out, const char *node)
+int modeset_open(int *out, const char *node)
 {
 	int fd, ret;
 	uint64_t has_dumb;
@@ -90,7 +90,7 @@ static int modeset_open(int *out, const char *node)
 	return 0;
 }
 
-static struct modeset_dev *modeset_list = NULL;
+extern struct modeset_dev *modeset_list = NULL;
 
 /*
  * So as next step we need to actually prepare all connectors that we find. We
@@ -111,7 +111,7 @@ static struct modeset_dev *modeset_list = NULL;
  * unused and no monitor is plugged in. So we can ignore this connector.
  */
 
-static int modeset_prepare(int fd)
+int modeset_prepare(int fd)
 {
 	drmModeRes *res;
 	drmModeConnector *conn;
@@ -195,7 +195,7 @@ static int modeset_prepare(int fd)
  *     framebuffer onto the monitor.
  */
 
-static int modeset_setup_dev(int fd, drmModeRes *res, drmModeConnector *conn,
+int modeset_setup_dev(int fd, drmModeRes *res, drmModeConnector *conn,
 			     struct modeset_dev *dev)
 {
 	int ret;
@@ -262,7 +262,7 @@ static int modeset_setup_dev(int fd, drmModeRes *res, drmModeConnector *conn,
  * Otherwise, we continue with the next CRTC/Encoder combination.
  */
 
-static int modeset_find_crtc(int fd, drmModeRes *res, drmModeConnector *conn,
+int modeset_find_crtc(int fd, drmModeRes *res, drmModeConnector *conn,
 			     struct modeset_dev *dev)
 {
 	drmModeEncoder *enc;
@@ -364,7 +364,7 @@ static int modeset_find_crtc(int fd, drmModeRes *res, drmModeConnector *conn,
  * memory directly via the dev->map memory map.
  */
 
-static int modeset_create_fb(int fd, struct modeset_dev *dev)
+int modeset_create_fb(int fd, struct modeset_dev *dev)
 {
 	struct drm_mode_create_dumb creq;
 	struct drm_mode_destroy_dumb dreq;
@@ -385,7 +385,7 @@ static int modeset_create_fb(int fd, struct modeset_dev *dev)
 	dev->stride = creq.pitch;
 	dev->size = creq.size;
 	dev->handle = creq.handle;
-
+	//printf("\n\nSIZE IS: %d", dev->size);
 	/* create framebuffer object for the dumb-buffer */
 	ret = drmModeAddFB(fd, dev->width, dev->height, 24, 32, dev->stride,
 			   dev->handle, &dev->fb);
@@ -431,6 +431,56 @@ err_destroy:
 	return ret;
 }
 
+int init_modeset() {
+	int ret, fd;
+	const char *card;
+	struct modeset_dev *iter;
+	//drmSetMaster();
+	/* check which DRM device to open */
+	// if (argc > 1)
+	// 	card = argv[1];
+	// else
+	card = "/dev/dri/card0";
+
+	fprintf(stderr, "using card '%s'\n", card);
+
+	/* open the DRM device */
+	ret = modeset_open(&fd, card);
+	drmSetMaster(fd);
+
+	if (ret)
+		goto out_return;
+
+	/* prepare all connectors and CRTCs */
+	ret = modeset_prepare(fd);
+	if (ret)
+		goto out_close;
+
+	/* perform actual modesetting on each found connector+CRTC */
+	for (iter = modeset_list; iter; iter = iter->next) {
+		iter->saved_crtc = drmModeGetCrtc(fd, iter->crtc);
+		ret = drmModeSetCrtc(fd, iter->crtc, iter->fb, 0, 0,
+						 &iter->conn, 1, &iter->mode);
+		if (ret)
+			fprintf(stderr, "cannot set CRTC for connector %u (%d): %m\n",
+				iter->conn, errno);
+	}
+	return fd;
+out_close:
+	close(fd);
+out_return:
+	if (ret) {
+		errno = -ret;
+		fprintf(stderr, "modeset failed with error %d: %m\n", errno);
+	} else {
+		fprintf(stderr, "exiting\n");
+	}
+	drmDropMaster(fd);
+	return ret;
+
+}
+
+
 /*
  * Finally! We have a connector with a suitable CRTC. We know which mode we want
  * to use and we have a framebuffer of the correct size that we can write to.
@@ -466,80 +516,19 @@ err_destroy:
  * application performs modesetting itself.
  */
 
-int main(int argc, char **argv)
-{
-	int ret, fd;
-	const char *card;
-	struct modeset_dev *iter;
-	//drmSetMaster();
-	/* check which DRM device to open */
-	if (argc > 1)
-		card = argv[1];
-	else
-		card = "/dev/dri/card0";
-
-	fprintf(stderr, "using card '%s'\n", card);
-
-	/* open the DRM device */
-	ret = modeset_open(&fd, card);
-	drmSetMaster(fd);
-
-	if (ret)
-		goto out_return;
-
-	/* prepare all connectors and CRTCs */
-	ret = modeset_prepare(fd);
-	if (ret)
-		goto out_close;
-
-	/* perform actual modesetting on each found connector+CRTC */
-	for (iter = modeset_list; iter; iter = iter->next) {
-		iter->saved_crtc = drmModeGetCrtc(fd, iter->crtc);
-		ret = drmModeSetCrtc(fd, iter->crtc, iter->fb, 0, 0,
-				     &iter->conn, 1, &iter->mode);
-		if (ret)
-			fprintf(stderr, "cannot set CRTC for connector %u (%d): %m\n",
-				iter->conn, errno);
-	}
-
-	/* draw some colors for 5seconds */
-	modeset_draw();
-
-	/* cleanup everything */
-	modeset_cleanup(fd);
-
-	ret = 0;
-
-out_close:
-	close(fd);
-out_return:
-	if (ret) {
-		errno = -ret;
-		fprintf(stderr, "modeset failed with error %d: %m\n", errno);
-	} else {
-		fprintf(stderr, "exiting\n");
-	}
-	drmDropMaster(fd);
-	return ret;
-}
-
-/*
- * A short helper function to compute a changing color value. No need to
- * understand it.
- */
-
-static uint8_t next_color(bool *up, uint8_t cur, unsigned int mod)
-{
-	uint8_t next;
-
-	next = cur + (*up ? 100 : -1) * (rand() % mod);
-	if ((*up && next < cur) || (!*up && next > cur)) {
-		*up = !*up;
-		next = cur;
-	}
-
-	return next;
-}
+// int main(int argc, char **argv)
+// {
+// 	int ret;
+// 	int fd = init_modeset();
+// 	/* draw some colors for 5seconds */
+// 	modeset_draw();
+//
+// 	/* cleanup everything */
+// 	modeset_cleanup(fd);
+//
+// 	ret = 0;
+// 	return ret;
+// }
 
 /*
  * modeset_draw(): This draws a solid color into all configured framebuffers.
@@ -561,53 +550,22 @@ static uint8_t next_color(bool *up, uint8_t cur, unsigned int mod)
  * beyond the scope of this document.
  */
 
-static void modeset_draw(void)
+void modeset_draw(uint32_t * buff)
 {
-	uint8_t r, g, b;
-	bool r_up, g_up, b_up;
-	unsigned int i, j, k, off;
+	unsigned int j, k, off;
 	struct modeset_dev *iter;
 
-	srand(time(NULL));
-	r = rand() % 0xff;
-	g = rand() % 0xff;
-	b = rand() % 0xff;
-	r_up = g_up = b_up = true;
-
-	/*for (i = 0; i < 50; ++i) {
-		r = next_color(&r_up, r, 20);
-		g = next_color(&g_up, g, 10);
-		b = next_color(&b_up, b, 5);
-
-		for (iter = modeset_list; iter; iter = iter->next) {
-			for (j = 0; j < iter->height; ++j) {
-				for (k = 0; k < iter->width; ++k) {
-					off = iter->stride * j + k * 4;
-					*(uint32_t*)&iter->map[off] =
-						     (r << 16) | (g << 8) | b;
-				}
-			}
+	//srand(time(NULL));
+	//r = rand() % 0xff;
+	//g = rand() % 0xff;
+	//b = rand() % 0xff;
+	iter = modeset_list;
+	//printf("\n\nstride is:%d\n", iter->stride);
+	for(j=0; j< iter->height; ++j ){
+		for (k = 0; k < iter->width; ++k) {
+			off = iter->stride * j + k * 4;
+			*(uint32_t*)&iter->map[off] = buff[j*iter->width+k];
 		}
-
-		usleep(100000);
-	}*/
-
-	for (iter = modeset_list; iter; iter = iter->next) {
-		for (i=0; i<5; i++){
-			for(j=i*((iter->height)/5); j<(i+1)*((iter->height)/5); ++j ){
-				for (k = 0; k < iter->width; ++k) {
-					off = iter->stride * j + k * 4;
-					*(uint32_t*)&iter->map[off] =
-						     (r << 16) | (g << 8) | b;
-				}
-
-			}
-			r = next_color(&r_up, r, 200);
-			g = next_color(&g_up, g, 100);
-			b = next_color(&b_up, b, 50);
-
-		}
-		sleep(10);
 	}
 }
 
@@ -618,7 +576,7 @@ static void modeset_draw(void)
  * It should be pretty obvious how all of this works.
  */
 
-static void modeset_cleanup(int fd)
+void modeset_cleanup(int fd)
 {
 	struct modeset_dev *iter;
 	struct drm_mode_destroy_dumb dreq;

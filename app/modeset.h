@@ -1,21 +1,11 @@
 #ifndef MODESET
 #define MODESET
 
-static int modeset_find_crtc(int fd, drmModeRes *res, drmModeConnector *conn,
-			     struct modeset_dev *dev);
+#include <stdint.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
 
-static int modeset_create_fb(int fd, struct modeset_dev *dev);
 
-static int modeset_setup_dev(int fd, drmModeRes *res, drmModeConnector *conn,
-			     struct modeset_dev *dev);
-
-static int modeset_open(int *out, const char *node);
-
-static int modeset_prepare(int fd);
-
-static void modeset_draw(void);
-
-static void modeset_cleanup(int fd);
 
 struct modeset_dev {
 	struct modeset_dev *next;
@@ -33,8 +23,25 @@ struct modeset_dev {
 	uint32_t crtc;
 	drmModeCrtc *saved_crtc;
 };
+int init_modeset();
 
-static struct modeset_dev *modeset_list;
+int modeset_find_crtc(int fd, drmModeRes *res, drmModeConnector *conn,
+			     struct modeset_dev *dev);
+
+int modeset_create_fb(int fd, struct modeset_dev *dev);
+
+int modeset_setup_dev(int fd, drmModeRes *res, drmModeConnector *conn,
+			     struct modeset_dev *dev);
+
+int modeset_open(int *out, const char *node);
+
+int modeset_prepare(int fd);
+
+void modeset_draw(uint32_t *buff);
+
+void modeset_cleanup(int fd);
+
+extern struct modeset_dev *modeset_list;
 
 
 #endif

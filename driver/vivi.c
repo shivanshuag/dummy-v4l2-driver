@@ -37,8 +37,8 @@
 
 #define VIVI_MODULE_NAME "vivi"
 
-/* Wake up at about 60 fps */
-#define WAKE_NUMERATOR 15
+/* Wake up at about 30 fps */
+#define WAKE_NUMERATOR 30
 #define WAKE_DENOMINATOR 1001
 #define BUFFER_TIMEOUT     msecs_to_jiffies(500)  /* 0.5 seconds */
 
