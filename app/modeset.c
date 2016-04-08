@@ -555,12 +555,7 @@ void modeset_draw(uint32_t *original_buffer, uint32_t * buff, int display_mode)
 	unsigned int j, k, off;
 	struct modeset_dev *iter;
 	uint32_t *temp;
-	//srand(time(NULL));
-	//r = rand() % 0xff;
-	//g = rand() % 0xff;
-	//b = rand() % 0xff;
 	iter = modeset_list;
-	//printf("\n\nstride is:%d\n", iter->stride);
 	if(display_mode == 0 || display_mode == 1) {
 		if(display_mode == 1) {
 			 temp = original_buffer;
@@ -647,6 +642,7 @@ void modeset_cleanup(int fd)
 
 		/* free allocated memory */
 		free(iter);
+		close(fd);
 	}
 }
 

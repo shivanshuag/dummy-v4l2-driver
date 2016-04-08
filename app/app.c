@@ -16,6 +16,8 @@
 
 #include <linux/videodev2.h>
 #include <stdint.h>
+#include <pthread.h>
+
 #include "modeset.h"
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
@@ -38,8 +40,8 @@ static unsigned int     n_buffers;
 static int              fd = -1;
 static int              frame_count = 70;
 static int height, width;
-//static uint32_t* line;
 int display_mode = 3;
+pthread_t thr_display;
 
 static void errno_exit(const char *s) {
   fprintf(stderr, "%s error %d, %s\n", s, errno, strerror(errno));
@@ -126,26 +128,15 @@ static void precalculate_buffer() {
 
 static void process_image(const void *p, int size)
 {
-  //if (out_buf)
-  /*int h,w;
-  char *frame = (char*)p;
-  for(h=0;h<height;h++) {
-    for(w=0;w<width*4;w+=4) {
-      printf("%x %x %x %x    ", (unsigned char)frame[0],(unsigned char)frame[1],(unsigned char)frame[2],(unsigned char)frame[3]);
-      frame+=4;
-    }
-    printf("\n");
-  }*/
-  //fwrite(p, size, 1, stdout);
   modeset_draw((uint32_t *)original_buffer->start, (uint32_t *)p, display_mode);
-  fflush(stderr);
-  fprintf(stderr, ".");
-  fflush(stdout);
+  // fflush(stderr);
+  // fprintf(stderr, ".");
+  // fflush(stdout);
 }
 
 static void fill_buffer(uint32_t* buf) {
   memcpy(buf, original_buffer->start, height*width*4);
-  printf("\n\n\nFilled buffer\n");
+  //printf("\n\n\nFilled buffer\n");
   //process_image((void *)buf, width*height*4);
 }
 
@@ -198,7 +189,7 @@ static int read_frame(void)
   assert(i < n_buffers);
 
   // display the buffer here
-  printf("\n\n\nReceived buffer\n");
+  //printf("\n\n\nReceived buffer\n");
   process_image((void *)buf.m.userptr, buf.bytesused);
 
   // fill the buffer
@@ -210,11 +201,9 @@ static int read_frame(void)
   return 1;
 }
 
-
-static void mainloop(void) {
+void *display(void *arg) {
   unsigned int count;
   count = frame_count;
-
   while (count-- > 0) {
     for (;;) {
       fd_set fds;
@@ -245,9 +234,44 @@ static void mainloop(void) {
       /* EAGAIN - continue select loop. */
     }
   }
+  pthread_exit(NULL);
+}
+
+static void take_input() {
+  // take input
+  // print ascii art
+  printf("     .--.\n \
+   |o_o |\n \
+   |:_/ |\n \
+  //   \\ \\\n \
+ (|     | )\n \
+/'\\_   _/`\\\n \
+\\___)=(___/\n \
+");
+  printf("V4l2 Dummy Driver Application.\n");
+  printf("---Display Mode---\n");
+  printf("0 - ‘LR’  i.e. show input pattern on the left half, output pattern on the right half\n");
+  printf("1 - ‘RL’  i.e. show input pattern on the right half, output pattern on the left half\n");
+  printf("2 - ‘TB’  i.e. show input pattern on the top half, output pattern on the bottom half\n");
+  printf("3 - ‘BT’  i.e. show input pattern on the bottom half, output pattern on the top half\n");
+  printf("Please input the display mode: ");
+  scanf("%d", &display_mode);
+  if(display_mode < 0 || display_mode > 3) {
+    fprintf(stderr,"Invalid display mode\n");
+    exit(EXIT_FAILURE);
+  }
+  printf("Press Enter to start display. You can press enter during the display to stop the display\n");
+  getchar();
 }
 
 
+static void stop_capturing(void)
+{
+  enum v4l2_buf_type type;
+  type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  if (-1 == xioctl(fd, VIDIOC_STREAMOFF, &type))
+    errno_exit("VIDIOC_STREAMOFF");
+}
 
 
 static void start_capturing(void) {
@@ -275,6 +299,9 @@ static void start_capturing(void) {
   if (-1 == xioctl(fd, VIDIOC_STREAMON, &type))
     errno_exit("VIDIOC_STREAMON");
 }
+
+
+
 
 
 static void init_userp(unsigned int buffer_size) {
@@ -317,7 +344,7 @@ static void init_userp(unsigned int buffer_size) {
 
 
 static void init_device(void) {
-  printf("doing init");
+  //printf("doing init");
   struct v4l2_capability cap;
   struct v4l2_format fmt;
 
@@ -353,7 +380,6 @@ static void init_device(void) {
   width = fmt.fmt.pix.width;
   height = fmt.fmt.pix.height;
   // set the image format of the driver
-  // TODO: first get the formats supported by the driver, then set
   if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
     errno_exit("VIDIOC_S_FMT");
 
@@ -362,13 +388,41 @@ static void init_device(void) {
 
   //  initialize the user pointers for the buffers
   init_userp(fmt.fmt.pix.sizeimage);
-  // calculate line
+  // calculate the color-bar pattern
   original_buffer = malloc(sizeof(struct buffer));
   original_buffer->start = malloc(fmt.fmt.pix.sizeimage);
   precalculate_buffer();
 
 }
 
+static void mainloop(void) {
+  int drifd;
+  for (;;) {
+    take_input();
+
+    //initilize the display
+    drifd = init_modeset();
+    if(modeset_list == NULL) {
+      fprintf(stderr, "cannot find drm device");
+      exit(EXIT_FAILURE);
+    }
+    height = modeset_list->height;
+    width = modeset_list->width;
+    // initialize the v4l2 device
+    init_device();
+    start_capturing();
+    if (pthread_create(&thr_display, NULL, display, (void *)&thr_display)) {
+      fprintf(stderr,"Can't create display thread\n");
+      exit(EXIT_FAILURE);
+    }
+    // wait for enter to stop displaying
+    getchar();
+    pthread_cancel(thr_display);
+    stop_capturing();
+    uninit_device();
+    modeset_cleanup(drifd);
+  }
+}
 
 static void open_device(void)
 {
@@ -397,19 +451,8 @@ static void open_device(void)
 int main(int argc, char **argv) {
   dev_name = "/dev/video0";
   open_device();
-  int drifd = init_modeset();
-  if(modeset_list == NULL) {
-    fprintf(stderr, "cannot find drm device");
-    exit(EXIT_FAILURE);
-  }
-  height = modeset_list->height;
-  width = modeset_list->width;
-  init_device();
-  start_capturing();
   mainloop();
-  uninit_device();
   close_device();
-  modeset_cleanup(drifd);
   fprintf(stderr, "\n");
   return 0;
 }
