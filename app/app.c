@@ -397,6 +397,9 @@ static void init_device(void) {
 
 static void mainloop(void) {
   int drifd;
+  struct timespec ts;
+  ts.tv_sec = 0;
+  ts.tv_nsec = 100000000;
   for (;;) {
     take_input();
 
@@ -411,6 +414,7 @@ static void mainloop(void) {
     // initialize the v4l2 device
     init_device();
     start_capturing();
+    // start the diplay thread
     if (pthread_create(&thr_display, NULL, display, (void *)&thr_display)) {
       fprintf(stderr,"Can't create display thread\n");
       exit(EXIT_FAILURE);
@@ -418,6 +422,8 @@ static void mainloop(void) {
     // wait for enter to stop displaying
     getchar();
     pthread_cancel(thr_display);
+    // wait for the thread to stop
+    nanosleep(&ts,NULL);
     stop_capturing();
     uninit_device();
     modeset_cleanup(drifd);
