@@ -23,7 +23,7 @@ struct modeset_dev {
 	uint32_t crtc;
 	drmModeCrtc *saved_crtc;
 };
-int init_modeset();
+int init_modeset(char *device);
 
 int modeset_find_crtc(int fd, drmModeRes *res, drmModeConnector *conn,
 			     struct modeset_dev *dev);

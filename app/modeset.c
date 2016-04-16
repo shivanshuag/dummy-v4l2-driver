@@ -1,29 +1,11 @@
 /*
- * modeset - DRM Modesetting Example
+ * This file contains helper functions for Kernel Mode Setting using
+ * dumb buffers. It is based on the DRM Modesetting example by
+ * David Herrmann <dh.herrmann@googlemail.com> present at
+ * https://github.com/dvdhrm/docs/blob/master/drm-howto/modeset.c
  *
- * Written 2012 by David Herrmann <dh.herrmann@googlemail.com>
- * Dedicated to the Public Domain.
- */
-
-/*
- * DRM Modesetting Howto
- * This document describes the DRM modesetting API. Before we can use the DRM
- * API, we have to include xf86drm.h and xf86drmMode.h. Both are provided by
- * libdrm which every major distribution ships by default. It has no other
- * dependencies and is pretty small.
- *
- * Please ignore all forward-declarations of functions which are used later. I
- * reordered the functions so you can read this document from top to bottom. If
- * you reimplement it, you would probably reorder the functions to avoid all the
- * nasty forward declarations.
- *
- * For easier reading, we ignore all memory-allocation errors of malloc() and
- * friends here. However, we try to correctly handle all other kinds of errors
- * that may occur.
- *
- * All functions and global variables are prefixed with "modeset_*" in this
- * file. So it should be clear whether a function is a local helper or if it is
- * provided by some external library.
+ * Parts of the code have been taken directly from the example.
+ * Other parts have been modified to support the requried functionality.
  */
 
 #define _GNU_SOURCE
@@ -41,23 +23,7 @@
 #include <xf86drmMode.h>
 #include "modeset.h"
 
-/*
- * When the linux kernel detects a graphics-card on your machine, it loads the
- * correct device driver (located in kernel-tree at ./drivers/gpu/drm/<xy>) and
- * provides two character-devices to control it. Udev (or whatever hotplugging
- * application you use) will create them as:
- *     /dev/dri/card0
- *     /dev/dri/controlID64
- * We only need the first one. You can hard-code this path into your application
- * like we do here, but it is recommended to use libudev with real hotplugging
- * and multi-seat support. However, this is beyond the scope of this document.
- * Also note that if you have multiple graphics-cards, there may also be
- * /dev/dri/card1, /dev/dri/card2, ...
- *
- * We simply use /dev/dri/card0 here but the user can specify another path on
- * the command line.
- *
- * modeset_open(out, node): This small helper function opens the DRM device
+/* modeset_open(out, node): This small helper function opens the DRM device
  * which is given as @node. The new fd is stored in @out on success. On failure,
  * a negative error code is returned.
  * After opening the file, we also check for the DRM_CAP_DUMB_BUFFER capability.
@@ -65,7 +31,6 @@
  * buffers without any driver-dependent code. As we want to avoid any radeon,
  * nvidia, intel, etc. specific code, we depend on DUMB_BUFFERs here.
  */
-
 int modeset_open(int *out, const char *node)
 {
 	int fd, ret;
@@ -385,7 +350,6 @@ int modeset_create_fb(int fd, struct modeset_dev *dev)
 	dev->stride = creq.pitch;
 	dev->size = creq.size;
 	dev->handle = creq.handle;
-	//printf("\n\nSIZE IS: %d", dev->size);
 	/* create framebuffer object for the dumb-buffer */
 	ret = drmModeAddFB(fd, dev->width, dev->height, 24, 32, dev->stride,
 			   dev->handle, &dev->fb);
@@ -431,16 +395,23 @@ err_destroy:
 	return ret;
 }
 
-int init_modeset() {
+
+
+ /* We open the device via modeset_open(). modeset_prepare()
+  * prepares all connectors and we can loop over "modeset_list" and call
+  * drmModeSetCrtc() on every CRTC/connector combination.
+  *
+  * Before calling drmModeSetCrtc() we also save the current CRTC configuration.
+  * This is used in modeset_cleanup() to restore the CRTC to the same mode as was
+  * before we changed it.
+  * If we don't do this, the screen will stay blank after we exit until another
+  * application performs modesetting itself.
+  */
+int init_modeset(char *device) {
 	int ret, fd;
 	const char *card;
 	struct modeset_dev *iter;
-	//drmSetMaster();
-	/* check which DRM device to open */
-	// if (argc > 1)
-	// 	card = argv[1];
-	// else
-	card = "/dev/dri/card0";
+	card = device;
 
 	fprintf(stderr, "using card '%s'\n", card);
 
@@ -480,74 +451,13 @@ out_return:
 
 }
 
-
-/*
- * Finally! We have a connector with a suitable CRTC. We know which mode we want
- * to use and we have a framebuffer of the correct size that we can write to.
- * There is nothing special left to do. We only have to program the CRTC to
- * connect each new framebuffer to each selected connector for each combination
- * that we saved in the global modeset_list.
- * This is done with a call to drmModeSetCrtc().
- *
- * So we are ready for our main() function. First we check whether the user
- * specified a DRM device on the command line, otherwise we use the default
- * /dev/dri/card0. Then we open the device via modeset_open(). modeset_prepare()
- * prepares all connectors and we can loop over "modeset_list" and call
- * drmModeSetCrtc() on every CRTC/connector combination.
- *
- * But printing empty black pages is boring so we have another helper function
- * modeset_draw() that draws some colors into the framebuffer for 5 seconds and
- * then returns. And then we have all the cleanup functions which correctly free
- * all devices again after we used them. All these functions are described below
- * the main() function.
- *
- * As a side note: drmModeSetCrtc() actually takes a list of connectors that we
- * want to control with this CRTC. We pass only one connector, though. As
- * explained earlier, if we used multiple connectors, then all connectors would
- * have the same controlling framebuffer so the output would be cloned. This is
- * most often not what you want so we avoid explaining this feature here.
- * Furthermore, all connectors will have to run with the same mode, which is
- * also often not guaranteed. So instead, we only use one connector per CRTC.
- *
- * Before calling drmModeSetCrtc() we also save the current CRTC configuration.
- * This is used in modeset_cleanup() to restore the CRTC to the same mode as was
- * before we changed it.
- * If we don't do this, the screen will stay blank after we exit until another
- * application performs modesetting itself.
- */
-
-// int main(int argc, char **argv)
-// {
-// 	int ret;
-// 	int fd = init_modeset();
-// 	/* draw some colors for 5seconds */
-// 	modeset_draw();
-//
-// 	/* cleanup everything */
-// 	modeset_cleanup(fd);
-//
-// 	ret = 0;
-// 	return ret;
-// }
-
 /*
  * modeset_draw(): This draws a solid color into all configured framebuffers.
- * Every 100ms the color changes to a slightly different color so we get some
- * kind of smoothly changing color-gradient.
- *
- * The color calculation can be ignored as it is pretty boring. So the
- * interesting stuff is iterating over "modeset_list" and then through all lines
- * and width. We then set each pixel individually to the current color.
- *
- * We do this 50 times as we sleep 100ms after each redraw round. This makes
- * 50*100ms = 5000ms = 5s so it takes about 5seconds to finish this loop.
- *
- * Please note that we draw directly into the framebuffer. This means that you
- * will see flickering as the monitor might refresh while we redraw the screen.
- * To avoid this you would need to use two framebuffers and a call to
- * drmModeSetCrtc() to switch between both buffers.
- * You can also use drmModePageFlip() to do a vsync'ed pageflip. But this is
- * beyond the scope of this document.
+ * It takes two buffers and has 4 display modes - LR, RL, TB, BT
+ * LR - Original frame on left half of the screen and modified frame on right half.
+ * RL - Original frame on right half of the screen and modified frame on left half.
+ * TB - Original frame on top half of the screen and modified frame on bottom half
+ * BT - Original frame on bottom half of the screen and modified frame on top half
  */
 
 void modeset_draw(uint32_t *original_buffer, uint32_t * buff, int display_mode)
@@ -642,34 +552,8 @@ void modeset_cleanup(int fd)
 
 		/* free allocated memory */
 		free(iter);
+
+    /* close the device */
 		close(fd);
 	}
 }
-
-/*
- * I hope this was a short but easy overview of the DRM modesetting API. The DRM
- * API offers much more capabilities including:
- *  - double-buffering or tripple-buffering (or whatever you want)
- *  - vsync'ed page-flips
- *  - hardware-accelerated rendering (for example via OpenGL)
- *  - output cloning
- *  - graphics-clients plus authentication
- *  - DRM planes/overlays/sprites
- *  - ...
- * If you are interested in these topics, I can currently only redirect you to
- * existing implementations, including:
- *  - plymouth (which uses dumb-buffers like this example; very easy to understand)
- *  - kmscon (which uses libuterm to do this)
- *  - wayland (very sophisticated DRM renderer; hard to understand fully as it
- *             uses more complicated techniques like DRM planes)
- *  - xserver (very hard to understand as it is split across many files/projects)
- *
- * But understanding how modesetting (as described in this document) works, is
- * essential to understand all further DRM topics.
- *
- * Any feedback is welcome. Feel free to use this code freely for your own
- * documentation or projects.
- *
- *  - Hosted on http://github.com/dvdhrm/docs
- *  - Written by David Herrmann <dh.herrmann@googlemail.com>
- */

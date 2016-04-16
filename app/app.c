@@ -1,3 +1,15 @@
+/*
+ * V4L2 Application.
+ * This application generates a colorbar patter, sends
+ * it to the 'dd' V4L2 dummy driver, which rotates it by 180 degrees.
+ * The rotated frame is displayed using the Kernel Mode Setting API's
+ *
+ * The application is based on sample Video Capture example present at
+ * https://linuxtv.org/downloads/v4l-dvb-apis/capture-example.html
+ * along with V4L2 documentation
+ */
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,12 +45,12 @@ struct buffer {
 #define BT 3
 
 
-static char            *dev_name;
+static char            *video_dev_name;
+static char            *drm_dev_name;
 struct buffer          *buffers;
 struct buffer          *original_buffer;
 static unsigned int     n_buffers;
 static int              fd = -1;
-static int              frame_count = 70;
 static int height, width;
 int display_mode = 3;
 pthread_t thr_display;
@@ -129,15 +141,10 @@ static void precalculate_buffer() {
 static void process_image(const void *p, int size)
 {
   modeset_draw((uint32_t *)original_buffer->start, (uint32_t *)p, display_mode);
-  // fflush(stderr);
-  // fprintf(stderr, ".");
-  // fflush(stdout);
 }
 
 static void fill_buffer(uint32_t* buf) {
   memcpy(buf, original_buffer->start, height*width*4);
-  //printf("\n\n\nFilled buffer\n");
-  //process_image((void *)buf, width*height*4);
 }
 
 static void uninit_device(void)
@@ -202,9 +209,6 @@ static int read_frame(void)
 }
 
 void *display(void *arg) {
-  unsigned int count;
-  count = frame_count;
-  while (count-- > 0) {
     for (;;) {
       fd_set fds;
       struct timeval tv;
@@ -229,41 +233,10 @@ void *display(void *arg) {
         exit(EXIT_FAILURE);
       }
 
-      if (read_frame())
-        break;
-      /* EAGAIN - continue select loop. */
-    }
+      read_frame();
   }
   pthread_exit(NULL);
 }
-
-static void take_input() {
-  // take input
-  // print ascii art
-  printf("     .--.\n \
-   |o_o |\n \
-   |:_/ |\n \
-  //   \\ \\\n \
- (|     | )\n \
-/'\\_   _/`\\\n \
-\\___)=(___/\n \
-");
-  printf("V4l2 Dummy Driver Application.\n");
-  printf("---Display Mode---\n");
-  printf("0 - ‘LR’  i.e. show input pattern on the left half, output pattern on the right half\n");
-  printf("1 - ‘RL’  i.e. show input pattern on the right half, output pattern on the left half\n");
-  printf("2 - ‘TB’  i.e. show input pattern on the top half, output pattern on the bottom half\n");
-  printf("3 - ‘BT’  i.e. show input pattern on the bottom half, output pattern on the top half\n");
-  printf("Please input the display mode: ");
-  scanf("%d", &display_mode);
-  if(display_mode < 0 || display_mode > 3) {
-    fprintf(stderr,"Invalid display mode\n");
-    exit(EXIT_FAILURE);
-  }
-  printf("Press Enter to start display. You can press enter during the display to stop the display\n");
-  getchar();
-}
-
 
 static void stop_capturing(void)
 {
@@ -315,7 +288,7 @@ static void init_userp(unsigned int buffer_size) {
   // REQBUF ioctl
   if (-1 == xioctl(fd, VIDIOC_REQBUFS, &req)) {
     if (EINVAL == errno) {
-      fprintf(stderr, "%s does not support user pointer i/o\n", dev_name);
+      fprintf(stderr, "%s does not support user pointer i/o\n", video_dev_name);
       exit(EXIT_FAILURE);
     }
     else {
@@ -351,7 +324,7 @@ static void init_device(void) {
   // query capabilities of the driver
   if (-1 == xioctl(fd, VIDIOC_QUERYCAP, &cap)) {
     if (EINVAL == errno) {
-      fprintf(stderr, "%s is no V4L2 device\n", dev_name);
+      fprintf(stderr, "%s is no V4L2 device\n", video_dev_name);
       exit(EXIT_FAILURE);
     }
     else {
@@ -360,13 +333,13 @@ static void init_device(void) {
   }
   // should have capture capabilities
   if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
-    fprintf(stderr, "%s is no video capture device\n", dev_name);
+    fprintf(stderr, "%s is no video capture device\n", video_dev_name);
     exit(EXIT_FAILURE);
   }
 
   // should have streaming capabilities
   if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
-    fprintf(stderr, "%s does not support streaming i/o\n", dev_name);
+    fprintf(stderr, "%s does not support streaming i/o\n", video_dev_name);
     exit(EXIT_FAILURE);
   }
 
@@ -392,8 +365,38 @@ static void init_device(void) {
   original_buffer = malloc(sizeof(struct buffer));
   original_buffer->start = malloc(fmt.fmt.pix.sizeimage);
   precalculate_buffer();
-
 }
+
+static void take_input() {
+  // take input
+  // print ascii art
+  printf("     .--.\n \
+   |o_o |\n \
+   |:_/ |\n \
+  //   \\ \\\n \
+ (|     | )\n \
+/'\\_   _/`\\\n \
+\\___)=(___/\n \
+");
+  printf("V4l2 Dummy Driver Application.\n");
+  printf("---Display Mode---\n");
+  printf("0 - ‘LR’  i.e. show input pattern on the left half, output pattern on the right half\n");
+  printf("1 - ‘RL’  i.e. show input pattern on the right half, output pattern on the left half\n");
+  printf("2 - ‘TB’  i.e. show input pattern on the top half, output pattern on the bottom half\n");
+  printf("3 - ‘BT’  i.e. show input pattern on the bottom half, output pattern on the top half\n");
+  printf("Any other number - Quit the apllication");
+  printf("Please input the display mode: ");
+  scanf("%d", &display_mode);
+  if(display_mode < 0 || display_mode > 3) {
+    fprintf(stderr,"Invalid display mode\n");
+    exit(EXIT_FAILURE);
+  }
+  printf("Press Enter to start display. You can press enter during the display to stop the display\n");
+  getchar();
+}
+
+
+
 
 static void mainloop(void) {
   int drifd;
@@ -404,7 +407,7 @@ static void mainloop(void) {
     take_input();
 
     //initilize the display
-    drifd = init_modeset();
+    drifd = init_modeset(drm_dev_name);
     if(modeset_list == NULL) {
       fprintf(stderr, "cannot find drm device");
       exit(EXIT_FAILURE);
@@ -430,32 +433,42 @@ static void mainloop(void) {
   }
 }
 
+
+
 static void open_device(void)
 {
   struct stat st;
 
-  if (-1 == stat(dev_name, &st)) {
+  if (-1 == stat(video_dev_name, &st)) {
     fprintf(stderr, "Cannot identify '%s': %d, %s\n",
-             dev_name, errno, strerror(errno));
+             video_dev_name, errno, strerror(errno));
     exit(EXIT_FAILURE);
   }
 
   if (!S_ISCHR(st.st_mode)) {
-    fprintf(stderr, "%s is no device\n", dev_name);
+    fprintf(stderr, "%s is no device\n", video_dev_name);
     exit(EXIT_FAILURE);
   }
 
-  fd = open(dev_name, O_RDWR /* required */ | O_NONBLOCK, 0);
+  fd = open(video_dev_name, O_RDWR /* required */ | O_NONBLOCK, 0);
 
   if (-1 == fd) {
     fprintf(stderr, "Cannot open '%s': %d, %s\n",
-             dev_name, errno, strerror(errno));
+             video_dev_name, errno, strerror(errno));
     exit(EXIT_FAILURE);
   }
 }
 
 int main(int argc, char **argv) {
-  dev_name = "/dev/video0";
+  // TODO: take the device file as input from the user
+  if (argc > 1)
+    video_dev_name = argv[1];
+  else
+    video_dev_name = "/dev/video0";
+  if (argc > 2)
+    drm_dev_name = argv[2];
+  else
+    drm_dev_name = "/dev/dri/card0";
   open_device();
   mainloop();
   close_device();
